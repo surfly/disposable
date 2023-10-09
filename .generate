@@ -426,6 +426,7 @@ class disposableHostGenerator():
                     scrape_retry += 1
                     if scrape_retry > scrape_max_retry:
                         return True
+                scrape_count += 1
                 time.sleep(source.get('timeout', 8))
                 continue
             return True
