@@ -394,43 +394,45 @@ class disposableHostGenerator():
         :rtype: bool
         """
         logging.info("Process %s (%s)", source['src'], source['type'])
-
         max_scrape = 80
-        scrape_max_retry = 3
-        scrape_count = 0
-        self.scrape = set()
-        scrape_retry = 0
 
-        while scrape_count < max_scrape:
-            data = self._fetchData(source)
+        self.scrape = set()
+        results = []
+
+        # Concurrently fetch data from "scrape" sources
+        if source.get("scrape") is True and source.get("type") != "custom":
+            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                futures = {executor.submit(self._fetchData, source): source for _ in range(max_scrape)}
+                done_f, _ = concurrent.futures.wait(futures, timeout=5*60)
+                logging.info("Finished %s fetches" % len(done_f))
+                results = [fut.result() for fut in done_f]
+        else:
+            # No scrapping, single fetch is enough
+            if source.get("type") == "custom":
+                if source.get("src") == "Tempmailo":
+                    time.sleep(source.get('timeout', 8))
+            try:
+                results = [self._fetchData(source)]
+            except Exception as e:
+                logging.exception(e)
+
+        for data in results:
             if data is None:
                 logging.warning("No results by %s", source['src'])
-                return False
+                continue
 
-            logging.debug("Fetched %s bytes", len(data))
             lines = self._preProcessData(source, data)
             if type(lines) is bool:
-                return lines
+                continue
 
             res = self._postProcessData(source, data, lines)
             if type(res) is bool:
-                return res
+                continue
 
             (processed_entries, found_entries) = res
 
             logging.debug('Processed %s entries (%s found)', processed_entries, found_entries)
-            if source.get('scrape'):
-                if processed_entries:
-                    scrape_retry = 0
-                else:
-                    scrape_retry += 1
-                    if scrape_retry > scrape_max_retry:
-                        return True
-                scrape_count += 1
-                time.sleep(source.get('timeout', 8))
-                continue
-            return True
-        return False
+        return True
 
     def _processTempmailo(self) -> Union[None, list]:
         """Process source for tempmailo.com
@@ -443,7 +445,7 @@ class disposableHostGenerator():
             return None
 
         cookies = {}
-        for (ky, vl) in res.getheaders():
+        for (ky, vl) in res.headers.items():
             if ky.lower() != 'set-cookie':
                 continue
 
